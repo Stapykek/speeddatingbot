@@ -1,7 +1,11 @@
 from gc import callbacks
 from multiprocessing.resource_tracker import register
 import sqlite3
+from os.path import curdir
+
 import telebot
+from attr.validators import matches_re
+from select import select
 from telebot import TeleBot
 from telebot.types import ChatFullInfo, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, \
     ReplyKeyboardRemove, Message, Update
@@ -27,7 +31,6 @@ def main(message):
     bot.send_message(message.chat.id,"Приветствую вас в чат-боте для speed-dating на WestHorecForum!\nКакая у вас роль?", reply_markup=markup)
 
 def register(message):
-
     @bot.callback_query_handler(func=lambda call: call.data in ['changename','leavename'])
     def handle(call):
         bot.answer_callback_query(call.id, "")
@@ -57,26 +60,30 @@ def register(message):
 
     sql = sqlite3.connect('forum.db')
     cur = sql.cursor()
-    name = message.chat.first_name
-    lname = message.chat.last_name
-    if lname != None:
-        name += " " + lname
-
     if (len(sql.execute(f"select * from participants where tg = '{message.chat.username}'").fetchall()) == 0):
         bot.send_message(message.chat.id, f"register {message.chat.username}")
         com = f"INSERT INTO participants (tg) VALUES ('{message.chat.username}');"
         cur.execute(com)
         sql.commit()
         bot.send_message(message.chat.id, "registered")
+
     cur = sql.execute(f"select * from participants where tg = '{message.chat.username}'")
     arr = cur.fetchall()[0]
-
+    name = cur.execute(f"SELECT name from participants where tg='{message.chat.username}'").fetchone()
+    if name == None:
+        name = message.chat.first_name
+        lname = message.chat.last_name
+        if lname != None:
+            name += " " + lname
+    else:
+        name = name[0]
     def Name(message):
         markup = InlineKeyboardMarkup()
         btn1 = InlineKeyboardButton("Изменить", callback_data='changename')
         btn2 = InlineKeyboardButton("Оставить", callback_data='leavename')
         markup.row(btn1,btn2)
         bot.send_message(message.chat.id, f"Ваше имя: {name}. Желаете изменить?", reply_markup=markup)
+
     def phone(message):
         if arr[7] == None:
             bot.send_message(message.chat.id, "Введите номер телефона")
@@ -217,11 +224,11 @@ def register(message):
             sql = sqlite3.connect('forum.db')
             cur = sql.cursor()
             cur = sql.execute(f"select * from participants where tg = '{message.chat.username}'")
-            booked = [i for i in message.text.split()]
+            booked = list(map(str,message.text.split()))
             tables = int(cur.execute("SELECT COUNT(*) from tables").fetchone()[0])
             bookedatthattime = int(cur.execute(f"SELECT COUNT(*) from meetings where time = '{booked[1]}' and date = '{booked[0]}'").fetchone()[0])
             if bookedatthattime < tables:
-                cur.execute(f"INSERT INTO meetings(creator,time,date) VALUES ('{message.chat.username}', '{booked[-1][1]}', '{booked[-1][0]}')")
+                cur.execute(f"INSERT INTO meetings(creator,time,date) VALUES ('{message.chat.username}', '{booked[1]}', '{booked[0]}')")
                 sql.commit()
                 cur.close()
                 sql.close()
@@ -243,7 +250,7 @@ def register(message):
             nb = InlineKeyboardButton("Нет", callback_data='dontbook')
             markup.row(yb,nb)
             bot.send_message(message.chat.id, "Вы желаете забронировать столики?", reply_markup=markup)
-        elif(arr[8]!='0'):
+        elif(arr[8]!=0):
             premiumpanel(message)
         else:
             basicpanel(message)
@@ -255,13 +262,129 @@ def adminpanel(message):
     bot.send_message(message.chat.id, 'admin panel')
 
 def basicpanel(message):
-    sql
-    bot.send_message(message.chat.id, 'Здравствуйте,')
+    markup = InlineKeyboardMarkup()
+    btn2 = InlineKeyboardButton('Получить расписание встреч', callback_data='print')
+    markup.add(btn2)
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    user_data = cur.execute(f"SELECT * from participants where tg = '{message.chat.username}'").fetchone()
+    bot.send_message(message.chat.id, 'Здравствуйте, ' + user_data[1] + '. У Вас обычный доступ.', reply_markup=markup)
     pass
 
+
 def premiumpanel(message):
-    bot.send_message(message.chat.id, 'premium panel')
-    pass
+    @bot.callback_query_handler(func=lambda call: call.data in ['browse', 'print'])
+    def handle(call):
+        if call.data == 'browse':
+            sql = sqlite3.connect('forum.db')
+            cur = sql.cursor()
+            meetings = cur.execute(f"SELECT * from meetings where participant_ID IS NULL and creator != '{call.message.chat.username}'").fetchall()
+            cur.close()
+            sql.close()
+            browsemeetings(call.message, call.message.chat.username,meetings)
+        if call.data == 'print':
+            printmeetings(call.message, call.message.chat.username)
+
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    user_data = cur.execute(f"SELECT * from participants where tg = '{message.chat.username}'").fetchone()
+    markup = InlineKeyboardMarkup()
+    btn1 = InlineKeyboardButton('Записаться на встречу', callback_data='browse')
+    btn2 = InlineKeyboardButton('Получить расписание встреч', callback_data='print')
+    markup.add(btn1)
+    markup.add(btn2)
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    bot.send_message(message.chat.id, 'Здравствуйте, ' + user_data[1] + '. У Вас премиум доступ.',reply_markup=markup)
+
+def arrangemeetings(uid):
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+
+def browsemeetings(message,uid,meetings):
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    cur.close()
+    def step(message,uid,mts):
+        @bot.callback_query_handler(func=lambda call: call.data in ['want', 'dontwant', 'dontbrowsereq'])
+        def handler(call):
+            if call.data == 'want':
+                makerequest(message,mts[0],uid)
+                browsemeetings(message, uid, mts[1:])
+            elif call.data == 'dontwant':
+                browsemeetings(message,uid, mts[1:])
+            elif call.data == 'dontbrowsereq':
+                sql = sqlite3.connect('forum.db')
+                bk = int(sql.execute(f"SELECT booked from participants where tg = '{uid}'").fetchone()[0])
+                sql.close()
+                if bk>0:
+                    premiumpanel(message)
+                else:
+                    basicpanel(message)
+        if len(meetings)>0:
+            mt = meetings[0]
+            sql = sqlite3.connect('forum.db')
+            cur = sql.cursor()
+            crid = cur.execute(f"Select creator from meetings where meeting_ID = '{mt[0]}'").fetchone()[0]
+            crname = cur.execute(f"Select name from participants where tg = '{crid}'").fetchone()[0]
+            markup = InlineKeyboardMarkup()
+            btn1 = InlineKeyboardButton("Записаться", callback_data="want")
+            btn2 = InlineKeyboardButton("Отказаться", callback_data="dontwant")
+            btn3 = InlineKeyboardButton("Выйти в меню", callback_data="dontbrowsereq")
+            markup.row(btn1,btn2)
+            markup.row(btn3)
+            bot.send_message(message.chat.id, "Доступна встреча в: " + mt[3] + ". В день форума: " + mt[4] + " На встрече будет: " + crname, reply_markup=markup)
+        else:
+            sql = sqlite3.connect('forum.db')
+            bk = int(sql.execute(f"SELECT booked from participants where tg = '{uid}'").fetchone()[0])
+            sql.close()
+            if bk > 0:
+                premiumpanel(message)
+            else:
+                basicpanel(message)
+    #def тут
+    step(message, uid, meetings)
+
+def makerequest(message : Message,mt,uid: str):
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    requests = cur.execute(f"SELECT * from requests where participant_ID = '{uid}'").fetchall()
+    for i in requests:
+        if i[0] == mt[0]:
+            bot.send_message(message.chat.id, "Вы уже записывались на эту встречу")
+            return
+    bot.send_message(message.chat.id, "Предварительная запись на встречу отправлена.")
+    cur.execute(f"Update meetings set participant_ID = '{uid}' where meeting_ID = '{mt[0]}'")
+    sql.commit()
+    cur.close()
+    sql.close()
+
+def printmeetings(message,uid): # not DONE!
+    msg = "Ваши встречи:\n"
+    sql = sqlite3.connect('forum.db')
+    cur = sql.cursor()
+    arr = cur.execute('SELECT * from meetings').fetchall()
+    for i in arr:
+        if (i[1] == uid or i[2] == uid) and i[2] != None:
+            if i[1] == uid:
+                otherid = i[2]
+            else:
+                otherid = i[1]
+            othername = cur.execute(f"Select name from participants where tg= '{otherid}'").fetchone()
+            if othername == None:
+                msg += "Встреча с: " + str(otherid) + ", в день форума: " + i[4] + ", в: " + i[3] + f"\n"
+            else:
+                msg += "Встреча с: " + othername[0] + ", в день форума: " + i[4] + ", в: " + i[3] + "\n"
+    if msg == "Ваши встречи:\n": msg = "У вас ещё нет встреч"
+    bot.send_message(message.chat.id, msg)
+    sql = sqlite3.connect('forum.db')
+    bk = int(sql.execute(f"SELECT booked from participants where tg = '{uid}'").fetchone()[0])
+    sql.close()
+    if bk > 0:
+        premiumpanel(message)
+    else:
+        basicpanel(message)
+
 
 
 
